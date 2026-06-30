@@ -1,0 +1,13 @@
+{
+  "name": "hisse-takip-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Borsa Takip veri proxy'si (Yahoo fiyat, RSS haber, StockTwits sosyal, BIST movers, Gemini AI). Bağımlılık yok.",
+  "scripts": {
+    "start": "node socialProxy.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

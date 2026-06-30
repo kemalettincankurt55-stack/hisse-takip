@@ -1,0 +1,22 @@
+# bağımlılıklar
+node_modules/
+
+# ortam değişkenleri (GİZLİ — asla commit etme)
+.env
+.env.local
+.env*.local
+
+# Expo
+.expo/
+dist/
+web-build/
+*.orig.*
+
+# geçici / export
+.web-export-test/
+.web-verify/
+.expo-export-test/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,20 @@
+# Render Blueprint — veri proxy'sini tek tıkla dağıtmak için.
+# render.com → New → Blueprint → bu repo'yu seç.
+services:
+  - type: web
+    name: hisse-takip-proxy
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: "npm install || true"
+    startCommand: "node socialProxy.mjs"
+    autoDeploy: true
+    envVars:
+      # GİZLİ — Render panelinden elle girilir (repo'ya yazılmaz).
+      - key: GEMINI_API_KEY
+        sync: false
+      # Opsiyonel (Reddit sosyal için):
+      - key: REDDIT_CLIENT_ID
+        sync: false
+      - key: REDDIT_CLIENT_SECRET
+        sync: false
