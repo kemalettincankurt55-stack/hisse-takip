@@ -1,0 +1,12 @@
+// Gradle init script — prebuild android/ klasörünü sıfırlasa bile hayatta kalır.
+// React Native Gradle Plugin'in eklediği kararsız Sonatype "snapshots" deposunu
+// (ara ara 504 verip build'i düşürüyor) tüm projelerden kaldırır.
+// Kullanım:  ./gradlew assembleRelease --init-script ../android-init.gradle
+gradle.projectsEvaluated {
+    gradle.rootProject.allprojects { proj ->
+        proj.repositories.removeIf { repo ->
+            repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository &&
+                repo.url.toString().contains('oss.sonatype.org')
+        }
+    }
+}

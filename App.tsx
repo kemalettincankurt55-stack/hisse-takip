@@ -7,7 +7,6 @@ import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View, Text, ScrollView, TouchableOpacity, RefreshControl, Modal, Switch, TextInput, Linking, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFonts } from 'expo-font';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from './src/constants/colors';
 import { Spacing, Radius, Shadows, Gradients, Typography } from './src/constants/theme';
@@ -71,8 +70,6 @@ const MetricCard = ({
 };
 
 export default function App() {
-  // İkon fontunu (Ionicons) yükle — release build'de simgelerin görünmesi için şart
-  const [fontsLoaded] = useFonts(Ionicons.font);
   const [activeTab, setActiveTab] = useState<'home' | 'watchlist' | 'news' | 'analysis' | 'settings'>('home');
   const [refreshing, setRefreshing] = useState(false);
   const [detailStock, setDetailStock] = useState<StockData | null>(null);
@@ -476,10 +473,18 @@ export default function App() {
   // Haber filtre seçenekleri
   const newsFilters: { key: string; label: string }[] = [
     { key: 'all', label: 'Tümü' },
-    { key: 'economic', label: 'Ekonomi' },
-    { key: 'news', label: 'Borsa' },
-    { key: 'social', label: 'Sosyal' },
+    { key: 'tr', label: '🇹🇷 Türk' },
+    { key: 'foreign', label: '🌍 Yabancı' },
   ];
+
+  // Kaynağa göre haber bölgesi: StockTwits/Reddit yabancı, diğerleri (BloombergHT, Dünya, KAP) Türk
+  const isForeignNews = (source: string): boolean =>
+    /stocktwits|reddit/i.test(source);
+  const regionFilteredNews = news.filter((n) => {
+    if (activeFilter === 'tr') return !isForeignNews(n.source);
+    if (activeFilter === 'foreign') return isForeignNews(n.source);
+    return true;
+  });
 
   // Haberler içeriği
   const renderNewsContent = () => (
@@ -516,16 +521,16 @@ export default function App() {
         ))}
       </ScrollView>
 
-      <Card title="📰 Haberler" subtitle={`${filteredNews.length} haber`}>
+      <Card title="📰 Haberler" subtitle={`${regionFilteredNews.length} haber`}>
         {newsLoading ? (
           <Loading text="Haberler yükleniyor..." />
-        ) : filteredNews.length === 0 ? (
+        ) : regionFilteredNews.length === 0 ? (
           <View style={styles.emptyState}>
             <Ionicons name="newspaper-outline" size={48} color={Colors.textMuted} />
             <Text style={styles.emptyText}>Bu filtrede haber yok</Text>
           </View>
         ) : (
-          filteredNews.map(item => <NewsCard key={item.id} news={item} showStock onPress={() => setNewsDetail(item)} />)
+          regionFilteredNews.map(item => <NewsCard key={item.id} news={item} showStock onPress={() => setNewsDetail(item)} />)
         )}
       </Card>
 
@@ -690,16 +695,6 @@ export default function App() {
         return renderHomeContent();
     }
   };
-
-  // İkon fontu yüklenene kadar bekle (aksi halde simgeler görünmez)
-  if (!fontsLoaded) {
-    return (
-      <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
-        <StatusBar style="light" />
-        <Loading text="Yükleniyor..." />
-      </View>
-    );
-  }
 
   return (
     <View style={styles.container}>
