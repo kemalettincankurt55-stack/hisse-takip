@@ -7,6 +7,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../constants/colors';
+import { formatCurrency } from '../../utils/formatters';
 
 interface BottomDetectorProps {
   symbol: string;
@@ -15,6 +16,7 @@ interface BottomDetectorProps {
   currentPrice: number;
   lowestPrice: number;
   potential: 'high' | 'medium' | 'low';
+  currency?: 'TRY' | 'USD';
   onPress?: () => void;
 }
 
@@ -25,6 +27,7 @@ export const BottomDetector: React.FC<BottomDetectorProps> = ({
   currentPrice,
   lowestPrice,
   potential,
+  currency = 'TRY',
   onPress,
 }) => {
   const getPotentialConfig = () => {
@@ -52,7 +55,7 @@ export const BottomDetector: React.FC<BottomDetectorProps> = ({
             <Text style={styles.daysBadge}>{days} gün</Text>
           </View>
           <Text style={styles.name} numberOfLines={1}>{stockName}</Text>
-          <Text style={styles.price}>₺{currentPrice.toFixed(2)}</Text>
+          <Text style={styles.price}>{formatCurrency(currentPrice, currency)}</Text>
         </View>
       </View>
 

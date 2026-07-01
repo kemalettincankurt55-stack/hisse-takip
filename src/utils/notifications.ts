@@ -4,6 +4,7 @@
  */
 
 import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
 
 // Bildirim yapılandırması
 Notifications.setNotificationHandler({
@@ -16,9 +17,27 @@ Notifications.setNotificationHandler({
   }),
 });
 
+// Android'de bildirim kanalı — Android 8+ için ŞART (yoksa bildirimler görünmez/hata verir)
+let channelReady = false;
+const ensureAndroidChannel = async (): Promise<void> => {
+  if (Platform.OS !== 'android' || channelReady) return;
+  try {
+    await Notifications.setNotificationChannelAsync('default', {
+      name: 'Genel Bildirimler',
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#3B82F6',
+    });
+    channelReady = true;
+  } catch (error) {
+    console.error('❌ Bildirim kanalı hatası:', error);
+  }
+};
+
 // Bildirim izni isteme
 export const requestNotificationPermission = async (): Promise<boolean> => {
   try {
+    await ensureAndroidChannel();
     const existing = await Notifications.getPermissionsAsync();
     const existingStatus = (existing as any).status || (existing as any).granted;
 

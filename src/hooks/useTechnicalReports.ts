@@ -27,6 +27,8 @@ interface Options {
   limit?: number;
   /** true ise teknik sinyallerden otomatik bildirim gönderilir. */
   autoNotify?: boolean;
+  /** false ise taban tespiti bildirimleri gönderilmez (Ayarlar'daki toggle). Varsayılan true. */
+  bottomAlerts?: boolean;
 }
 
 interface Result {
@@ -40,7 +42,7 @@ export const useTechnicalReports = (
   stocks: StockData[],
   options: Options = {},
 ): Result => {
-  const { priceHistoryBySymbol, limit = 12, autoNotify = false } = options;
+  const { priceHistoryBySymbol, limit = 12, autoNotify = false, bottomAlerts = true } = options;
 
   const { reports, usingSampleData } = useMemo(() => {
     let sampleUsed = false;
@@ -58,10 +60,14 @@ export const useTechnicalReports = (
     return { reports: list, usingSampleData: sampleUsed };
   }, [stocks, priceHistoryBySymbol, limit]);
 
-  const alerts = useMemo(() => detectAlertsForReports(reports), [reports]);
+  const alerts = useMemo(() => {
+    const all = detectAlertsForReports(reports);
+    // Ayarlar'da taban bildirimleri kapalıysa 'bottom' türü uyarıları çıkar
+    return bottomAlerts ? all : all.filter((a) => a.type !== 'bottom');
+  }, [reports, bottomAlerts]);
 
   const notifyAlerts = useCallback(async () => {
-    return dispatchAlerts(alerts, { minPriority: 'high', maxNotifications: 5 });
+    return dispatchAlerts(alerts, { minPriority: 'high', maxNotifications: 3 });
   }, [alerts]);
 
   useEffect(() => {

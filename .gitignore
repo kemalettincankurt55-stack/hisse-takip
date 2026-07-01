@@ -12,6 +12,10 @@ dist/
 web-build/
 *.orig.*
 
+# Native projeler (expo prebuild ile üretilir; commit'e gerek yok)
+/android/
+/ios/
+
 # geçici / export
 .web-export-test/
 .web-verify/

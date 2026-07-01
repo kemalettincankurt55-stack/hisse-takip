@@ -10,6 +10,17 @@ import { getLatestKAPNews, getCompanyKAPNews } from '../services/api/kap';
 import { summarizeNews } from '../services/ai/aiProvider';
 import { getSampleNews } from '../services/scraper/sampleNews';
 import { getProxyNews } from '../services/scraper/newsFeed';
+import { getSocialPosts } from '../services/social/socialFeed';
+
+// Haber içeriğine göre "Borsa" mı "Ekonomi" mi olduğunu belirler
+const BORSA_KEYWORDS = [
+  'borsa', 'hisse', 'bist', 'endeks', 'xu100', 'halka arz', 'temettü', 'temettu',
+  'bilanço', 'bilanco', 'şirket', 'sirket', 'kap', 'tahvil', 'yatırımcı', 'yatirimci',
+];
+const categorizeNews = (title: string, content: string): NewsItem['newsType'] => {
+  const text = `${title} ${content}`.toLowerCase();
+  return BORSA_KEYWORDS.some((k) => text.includes(k)) ? 'news' : 'economic';
+};
 
 // Hook dönüş tipi
 interface UseNewsReturn {
@@ -66,22 +77,43 @@ export const useNews = (): UseNewsReturn => {
       setError(null);
 
       // Paralel olarak farklı kaynaklardan haber çek
-      // Birincil: proxy üzerinden gerçek RSS (BloombergHT + Dünya)
-      const [proxyNews, scrapedNews, kapNews] = await Promise.allSettled([
+      // Birincil: proxy üzerinden gerçek RSS (BloombergHT + Dünya) + sosyal (StockTwits)
+      const [proxyNews, scrapedNews, kapNews, social1, social2] = await Promise.allSettled([
         getProxyNews(),
         scrapeAllNews(),
         getLatestKAPNews(50),
+        getSocialPosts('AAPL'),
+        getSocialPosts('TSLA'),
       ]);
 
       const allNews: NewsItem[] = [];
       let idCounter = 1;
 
-      // Proxy (RSS) haberlerini ekle
+      // Proxy (RSS) haberlerini ekle — içeriğe göre Ekonomi/Borsa olarak kategorize et
       if (proxyNews.status === 'fulfilled') {
         proxyNews.value.forEach((item) => {
-          allNews.push({ ...item, id: idCounter++ });
+          allNews.push({ ...item, id: idCounter++, newsType: categorizeNews(item.title, item.content) });
         });
       }
+
+      // Sosyal medya gönderilerini (StockTwits) "Sosyal" haberi olarak ekle
+      const socialPosts = [
+        ...(social1.status === 'fulfilled' ? social1.value : []),
+        ...(social2.status === 'fulfilled' ? social2.value : []),
+      ];
+      socialPosts.slice(0, 20).forEach((p) => {
+        allNews.push({
+          id: idCounter++,
+          title: `${p.symbols[0] || ''} · @${p.author}`.trim(),
+          content: p.content,
+          source: p.source === 'reddit' ? 'Reddit' : 'StockTwits',
+          sourceUrl: p.url,
+          newsType: 'social',
+          sentiment: p.sentiment,
+          publishedAt: p.publishedAt,
+          createdAt: new Date().toISOString(),
+        });
+      });
 
       // Scraped haberleri ekle
       if (scrapedNews.status === 'fulfilled') {

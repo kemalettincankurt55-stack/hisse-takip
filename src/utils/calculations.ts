@@ -170,22 +170,28 @@ export const detectBottom = (
   const avgPrice = closes.reduce((a, b) => a + b, 0) / closes.length;
   const rangePercent = (priceRange / avgPrice) * 100;
   
-  // Taban kontrolü (%3'ten az dalgalanma = taban)
-  const isBottoming = rangePercent < 3;
-  
+  // Net (kümülatif) değişim — pencerenin başından sonuna yüzde
+  const netChangePct = ((closes[closes.length - 1] - closes[0]) / closes[0]) * 100;
+
+  // TABAN = düşük dalgalanma (yatay) VE belirgin trend YOK.
+  // Yavaş ama istikrarlı bir DÜŞÜŞ taban değildir; bu yüzden net değişim de
+  // yaklaşık sıfıra yakın (yatay) olmalı. Düşüş trendini eler.
+  const isBottoming = rangePercent < 4 && Math.abs(netChangePct) < 2.5;
+
+  // Bir alt pencerenin gerçekten yatay olup olmadığını kontrol eder
+  // (günlük küçük değişim + net değişim yaklaşık sıfır, yani ne düşüş ne yükseliş)
+  const isFlat = (window: typeof recent7Days): boolean => {
+    if (window.length < 2) return false;
+    const net = ((window[window.length - 1].close - window[0].close) / window[0].close) * 100;
+    return window.every(d => Math.abs(d.changePercent) < 1.2) && Math.abs(net) < 2;
+  };
+
   if (isBottoming) {
     let days = 0;
-    
-    if (recent3Days.every(d => Math.abs(d.changePercent) < 1.5)) {
-      days = 3;
-    }
-    if (recent5Days.every(d => Math.abs(d.changePercent) < 1.5)) {
-      days = 5;
-    }
-    if (recent7Days.every(d => Math.abs(d.changePercent) < 1.5)) {
-      days = 7;
-    }
-    
+    if (isFlat(recent3Days)) days = 3;
+    if (isFlat(recent5Days)) days = 5;
+    if (isFlat(recent7Days)) days = 7;
+
     if (days >= 3) {
       return {
         isBottoming: true,
@@ -196,7 +202,7 @@ export const detectBottom = (
       };
     }
   }
-  
+
   return null;
 };
 

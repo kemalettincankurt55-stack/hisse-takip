@@ -5,8 +5,9 @@
 
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity, RefreshControl, Modal, Switch } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, TouchableOpacity, RefreshControl, Modal, Switch, TextInput, Linking, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useFonts } from 'expo-font';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from './src/constants/colors';
 import { Spacing, Radius, Shadows, Gradients, Typography } from './src/constants/theme';
@@ -18,7 +19,8 @@ import { NewsCard } from './src/components/news/NewsCard';
 import { BottomDetector } from './src/components/analysis/BottomDetector';
 import { TechnicalReportCard } from './src/components/analysis/TechnicalReportCard';
 import { AIAnalysisCard } from './src/components/analysis/AIAnalysisCard';
-import { analyzeStock as aiAnalyzeStock, providerLabel } from './src/services/ai/aiProvider';
+import { EconomicCalendarCard } from './src/components/analysis/EconomicCalendarCard';
+import { analyzeStock as aiAnalyzeStock, generateWeeklyAnalysis, providerLabel } from './src/services/ai/aiProvider';
 import { DetailedChart } from './src/components/stock/DetailedChart';
 import { SocialFeedCard } from './src/components/social/SocialFeedCard';
 import { useSocialPosts } from './src/hooks/useSocialPosts';
@@ -69,11 +71,18 @@ const MetricCard = ({
 };
 
 export default function App() {
+  // İkon fontunu (Ionicons) yükle — release build'de simgelerin görünmesi için şart
+  const [fontsLoaded] = useFonts(Ionicons.font);
   const [activeTab, setActiveTab] = useState<'home' | 'watchlist' | 'news' | 'analysis' | 'settings'>('home');
   const [refreshing, setRefreshing] = useState(false);
   const [detailStock, setDetailStock] = useState<StockData | null>(null);
+  const [newsDetail, setNewsDetail] = useState<import('./src/store/newsStore').NewsItem | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [aiText, setAiText] = useState<string | null>(null);
   const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
+  const [weeklyReport, setWeeklyReport] = useState<string | null>(null);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
 
   const {
     stocks,
@@ -148,7 +157,8 @@ export default function App() {
     notifyAlerts,
   } = useTechnicalReports(reportStocks, {
     limit: 12,
-    autoNotify: true,
+    autoNotify: settings.pushNotifications,
+    bottomAlerts: settings.bottomDetectionAlerts,
     priceHistoryBySymbol: historyBySymbol,
   });
 
@@ -209,6 +219,29 @@ export default function App() {
     }
   };
 
+  // Haftalık AI piyasa analizi üret (movers + sinyaller + haberler girdi)
+  const runWeeklyAnalysis = async () => {
+    const buy = reports.filter(r => r.signal === 'AL' || r.signal === 'GÜÇLÜ AL').length;
+    const sell = reports.filter(r => r.signal === 'SAT' || r.signal === 'GÜÇLÜ SAT').length;
+    const bistData = [
+      `En çok yükselenler: ${movers.gainers.slice(0, 5).map(g => `${g.symbol} %${g.changePercent}`).join(', ') || 'veri yok'}.`,
+      `En çok düşenler: ${movers.losers.slice(0, 5).map(g => `${g.symbol} %${g.changePercent}`).join(', ') || 'veri yok'}.`,
+      `Teknik tarama: ${buy} hissede AL, ${sell} hissede SAT sinyali (toplam ${reports.length}).`,
+    ].join('\n');
+    const usData = marketMetrics.map(m => `${m.label}: ${m.value} (%${m.changePercent})`).join(', ');
+    const economicNews = news.slice(0, 6).map(n => `- ${n.title}`).join('\n');
+
+    setWeeklyLoading(true);
+    try {
+      const text = await generateWeeklyAnalysis(bistData, usData, economicNews);
+      setWeeklyReport(text);
+    } catch (e: any) {
+      setWeeklyReport(`Haftalık analiz üretilemedi: ${e?.message || 'bilinmeyen hata'}`);
+    } finally {
+      setWeeklyLoading(false);
+    }
+  };
+
   // Açılışta bildirim izni iste (anlık bildirimler için)
   useEffect(() => {
     void requestNotificationPermission();
@@ -217,12 +250,12 @@ export default function App() {
   // Haberler yüklendiğinde en güncel önemli haberi otomatik bildir (oturumda bir kez)
   const lastNotifiedNewsId = useRef<number | null>(null);
   useEffect(() => {
-    if (news.length === 0) return;
+    if (!settings.newsAlerts || news.length === 0) return;
     const top = news[0];
     if (lastNotifiedNewsId.current === top.id) return;
     lastNotifiedNewsId.current = top.id;
     void notifyNews(top.title, top.content.slice(0, 120), top.source);
-  }, [news]);
+  }, [news, settings.newsAlerts]);
 
   // Yenileme
   const onRefresh = async () => {
@@ -308,36 +341,64 @@ export default function App() {
       </Card>
 
       {/* Taban Yapan Hisseler */}
-      <Card title="🔔 Taban Yapan Hisseler" subtitle="Son 3-7 gün" accent={Colors.bottom}>
-        {stocks.slice(0, 5).map((stock, index) => (
-          <BottomDetector
-            key={stock.symbol}
-            symbol={stock.symbol}
-            stockName={stock.name}
-            days={3 + index}
-            currentPrice={stock.currentPrice || 0}
-            lowestPrice={(stock.currentPrice || 0) * 0.95}
-            potential={index < 2 ? 'high' : index < 4 ? 'medium' : 'low'}
-          />
-        ))}
+      <Card title="🔔 Taban Yapan Hisseler" subtitle="Gerçek teknik tespit" accent={Colors.bottom}>
+        {(() => {
+          const bottoming = reports.filter(r => r.snapshot?.bottom);
+          if (bottoming.length === 0) {
+            return (
+              <View style={styles.emptyState}>
+                <Ionicons name="pulse-outline" size={40} color={Colors.textMuted} />
+                <Text style={styles.emptyText}>Şu an taban yapan hisse tespit edilmedi</Text>
+                <Text style={styles.emptySubtext}>Yatay seyreden (dip yapan) hisseler burada görünür</Text>
+              </View>
+            );
+          }
+          return bottoming.slice(0, 5).map(r => (
+            <BottomDetector
+              key={r.symbol}
+              symbol={r.symbol || ''}
+              stockName={r.symbol || ''}
+              days={r.snapshot!.bottom!.days}
+              currentPrice={r.snapshot!.bottom!.currentPrice}
+              lowestPrice={r.snapshot!.bottom!.lowestPrice}
+              potential={r.snapshot!.bottom!.potential}
+              currency={(reportStocks.find(s => s.symbol === r.symbol)?.currency as 'TRY' | 'USD') || 'TRY'}
+            />
+          ));
+        })()}
       </Card>
 
       {/* Son Haberler */}
       <Card title="📰 Son Haberler" subtitle={`${news.length} haber`} accent={Colors.accent}>
         {news.slice(0, 3).map(item => (
-          <NewsCard key={item.id} news={item} showStock />
+          <NewsCard key={item.id} news={item} showStock onPress={() => setNewsDetail(item)} />
         ))}
       </Card>
 
-      {/* Popüler Hisseler */}
-      <Card title="📈 Popüler Hisseler" subtitle="BIST100">
-        {stocks.slice(0, 5).map(stock => (
-          <StockCard
-            key={stock.symbol}
-            stock={stock}
-            onPress={() => setDetailStock(stock)}
-          />
-        ))}
+      {/* Popüler Hisseler — gerçek fiyatla (rapor verisinden) */}
+      <Card title="📈 Popüler Hisseler" subtitle="BIST + ABD">
+        {reports.slice(0, 6).map(r => {
+          const base = reportStocks.find(s => s.symbol === r.symbol);
+          const stock: StockData = {
+            id: base?.id ?? 0,
+            symbol: r.symbol || '',
+            name: base?.name || r.symbol || '',
+            exchange: base?.exchange || 'BIST',
+            sector: base?.sector || '',
+            currency: base?.currency || 'TRY',
+            currentPrice: r.snapshot?.lastClose,
+          };
+          return (
+            <StockCard
+              key={r.symbol}
+              stock={stock}
+              onPress={() => setDetailStock(stock)}
+              isOnWatchlist={isOnWatchlist(stock.symbol)}
+              onAddToWatchlist={() => addToWatchlist(stock)}
+              onRemoveFromWatchlist={() => removeFromWatchlist(stock.symbol)}
+            />
+          );
+        })}
       </Card>
 
       <View style={{ height: 100 }} />
@@ -415,7 +476,6 @@ export default function App() {
   // Haber filtre seçenekleri
   const newsFilters: { key: string; label: string }[] = [
     { key: 'all', label: 'Tümü' },
-    { key: 'kap', label: 'KAP' },
     { key: 'economic', label: 'Ekonomi' },
     { key: 'news', label: 'Borsa' },
     { key: 'social', label: 'Sosyal' },
@@ -465,7 +525,7 @@ export default function App() {
             <Text style={styles.emptyText}>Bu filtrede haber yok</Text>
           </View>
         ) : (
-          filteredNews.map(item => <NewsCard key={item.id} news={item} showStock />)
+          filteredNews.map(item => <NewsCard key={item.id} news={item} showStock onPress={() => setNewsDetail(item)} />)
         )}
       </Card>
 
@@ -517,6 +577,32 @@ export default function App() {
               <Text style={styles.notifyButtonText}>Güçlü sinyalleri bildirim olarak gönder</Text>
             </LinearGradient>
           </TouchableOpacity>
+        </Card>
+
+        {/* Ekonomik Takvim */}
+        <EconomicCalendarCard />
+
+        {/* Haftalık AI Analizi */}
+        <Card title="🧠 Haftalık AI Analizi" subtitle={`${providerLabel()} ile piyasa yorumu`} accent={Colors.accentPurple}>
+          {weeklyReport ? (
+            <>
+              <Text style={styles.weeklyText}>{weeklyReport}</Text>
+              <TouchableOpacity style={styles.regenBtn} onPress={runWeeklyAnalysis} disabled={weeklyLoading}>
+                <Ionicons name="refresh" size={14} color={Colors.textSecondary} />
+                <Text style={styles.regenBtnText}>Yeniden üret</Text>
+              </TouchableOpacity>
+            </>
+          ) : weeklyLoading ? (
+            <View style={{ alignItems: 'center', paddingVertical: 20, gap: 8 }}>
+              <ActivityIndicator color={Colors.accentPurple} />
+              <Text style={styles.aiStatusText}>Haftalık analiz üretiliyor…</Text>
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.weeklyBtn} onPress={runWeeklyAnalysis} activeOpacity={0.85}>
+              <Ionicons name="sparkles" size={18} color={Colors.text} />
+              <Text style={styles.weeklyBtnText}>Haftalık Analiz Oluştur</Text>
+            </TouchableOpacity>
+          )}
         </Card>
 
         {sorted.map(report => (
@@ -605,10 +691,20 @@ export default function App() {
     }
   };
 
+  // İkon fontu yüklenene kadar bekle (aksi halde simgeler görünmez)
+  if (!fontsLoaded) {
+    return (
+      <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
+        <StatusBar style="light" />
+        <Loading text="Yükleniyor..." />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      
+
       {/* Header — gradient hero */}
       <LinearGradient
         colors={Gradients.hero}
@@ -628,7 +724,7 @@ export default function App() {
           </View>
         </View>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerButton}>
+          <TouchableOpacity style={styles.headerButton} onPress={() => setActiveTab('analysis')}>
             <Ionicons name="notifications-outline" size={20} color={Colors.text} />
             {alerts.length > 0 && (
               <View style={styles.notifDot}>
@@ -636,7 +732,7 @@ export default function App() {
               </View>
             )}
           </TouchableOpacity>
-          <TouchableOpacity style={styles.headerButton}>
+          <TouchableOpacity style={styles.headerButton} onPress={() => setSearchOpen(true)}>
             <Ionicons name="search" size={20} color={Colors.text} />
           </TouchableOpacity>
         </View>
@@ -719,6 +815,103 @@ export default function App() {
           </ScrollView>
         </View>
       </Modal>
+
+      {/* Hisse Arama Ekranı */}
+      <Modal visible={searchOpen} animationType="slide" onRequestClose={() => setSearchOpen(false)}>
+        <View style={styles.container}>
+          <LinearGradient colors={Gradients.hero} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.header}>
+            <View style={[styles.headerLeft, { flex: 1 }]}>
+              <TouchableOpacity style={styles.headerButton} onPress={() => { setSearchOpen(false); setSearchQuery(''); }}>
+                <Ionicons name="arrow-back" size={22} color={Colors.text} />
+              </TouchableOpacity>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Hisse ara (sembol veya isim)..."
+                placeholderTextColor={Colors.textMuted}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+                autoCapitalize="characters"
+              />
+            </View>
+          </LinearGradient>
+          <ScrollView style={styles.content} keyboardShouldPersistTaps="handled">
+            {ALL_STOCKS.filter(s => {
+              const q = searchQuery.trim().toUpperCase();
+              return q.length > 0 && (s.symbol.includes(q) || s.name.toUpperCase().includes(q));
+            }).slice(0, 30).map((s, i) => {
+              const stock: StockData = { id: i, symbol: s.symbol, name: s.name, exchange: s.exchange, sector: s.sector, currency: s.currency };
+              return (
+                <StockCard
+                  key={s.symbol}
+                  stock={stock}
+                  onPress={() => { setSearchOpen(false); setSearchQuery(''); setDetailStock(stock); }}
+                  isOnWatchlist={isOnWatchlist(s.symbol)}
+                  onAddToWatchlist={() => addToWatchlist(stock)}
+                  onRemoveFromWatchlist={() => removeFromWatchlist(s.symbol)}
+                />
+              );
+            })}
+            {searchQuery.trim().length === 0 && (
+              <Text style={styles.searchHint}>Aramak için hisse kodu veya adı yazın (ör. ASELS, Garanti)</Text>
+            )}
+            <View style={{ height: 60 }} />
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Haber Detay Ekranı */}
+      <Modal visible={newsDetail !== null} animationType="slide" onRequestClose={() => setNewsDetail(null)}>
+        <View style={styles.container}>
+          <LinearGradient colors={Gradients.hero} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.header}>
+            <View style={styles.headerLeft}>
+              <TouchableOpacity style={styles.headerButton} onPress={() => setNewsDetail(null)}>
+                <Ionicons name="arrow-back" size={22} color={Colors.text} />
+              </TouchableOpacity>
+              <Text style={styles.headerTitle}>Haber</Text>
+            </View>
+          </LinearGradient>
+          {newsDetail && (
+            <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+              <View style={styles.newsMetaRow}>
+                <View style={styles.newsSourceBadge}>
+                  <Text style={styles.newsSourceText}>{newsDetail.source}</Text>
+                </View>
+                {newsDetail.sentiment && (
+                  <View style={[styles.newsSentiment, {
+                    backgroundColor: (newsDetail.sentiment === 'positive' ? Colors.positive : newsDetail.sentiment === 'negative' ? Colors.negative : Colors.textMuted) + '1A',
+                  }]}>
+                    <Text style={[styles.newsSentimentText, {
+                      color: newsDetail.sentiment === 'positive' ? Colors.positive : newsDetail.sentiment === 'negative' ? Colors.negative : Colors.textMuted,
+                    }]}>
+                      {newsDetail.sentiment === 'positive' ? 'Olumlu' : newsDetail.sentiment === 'negative' ? 'Olumsuz' : 'Nötr'}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <Text style={styles.newsDetailTitle}>{newsDetail.title}</Text>
+              {newsDetail.stockSymbol && (
+                <TouchableOpacity
+                  onPress={() => {
+                    const s = ALL_STOCKS.find(x => x.symbol === newsDetail.stockSymbol);
+                    if (s) { setNewsDetail(null); setDetailStock({ id: 0, symbol: s.symbol, name: s.name, exchange: s.exchange, sector: s.sector, currency: s.currency }); }
+                  }}
+                >
+                  <Text style={styles.newsStockLink}>📈 {newsDetail.stockName || newsDetail.stockSymbol}</Text>
+                </TouchableOpacity>
+              )}
+              <Text style={styles.newsDetailBody}>{newsDetail.content}</Text>
+              {newsDetail.sourceUrl ? (
+                <TouchableOpacity style={styles.newsLinkBtn} onPress={() => Linking.openURL(newsDetail.sourceUrl!)}>
+                  <Ionicons name="open-outline" size={18} color={Colors.text} />
+                  <Text style={styles.newsLinkText}>Kaynakta oku</Text>
+                </TouchableOpacity>
+              ) : null}
+              <View style={{ height: 60 }} />
+            </ScrollView>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -769,6 +962,93 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.textSecondary,
   },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: Colors.text,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: Radius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  searchHint: {
+    fontSize: 13,
+    color: Colors.textMuted,
+    textAlign: 'center',
+    marginTop: 40,
+    paddingHorizontal: 30,
+    lineHeight: 20,
+  },
+  newsMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  newsSourceBadge: {
+    backgroundColor: Colors.surfaceLight,
+    borderRadius: Radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  newsSourceText: { fontSize: 12, fontWeight: '700', color: Colors.textSecondary },
+  newsSentiment: { borderRadius: Radius.pill, paddingHorizontal: 12, paddingVertical: 4 },
+  newsSentimentText: { fontSize: 12, fontWeight: '700' },
+  newsDetailTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: Colors.text,
+    lineHeight: 30,
+    marginBottom: 12,
+  },
+  newsStockLink: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.primaryLight,
+    marginBottom: 12,
+  },
+  newsDetailBody: {
+    fontSize: 16,
+    color: Colors.textSecondary,
+    lineHeight: 26,
+  },
+  newsLinkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.md,
+    paddingVertical: 14,
+    marginTop: 24,
+  },
+  newsLinkText: { color: Colors.text, fontSize: 15, fontWeight: '700' },
+  weeklyText: { fontSize: 14, color: Colors.text, lineHeight: 22 },
+  weeklyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.accentPurple,
+    borderRadius: Radius.md,
+    paddingVertical: 12,
+  },
+  weeklyBtnText: { color: Colors.text, fontSize: 14, fontWeight: '700' },
+  regenBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    marginTop: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.surfaceLight,
+  },
+  regenBtnText: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600' },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
